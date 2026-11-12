@@ -1,6 +1,6 @@
-# Agents Rules for dotsem/actions
+# Agents Rules for dotactions/sarif-report
 
-This file specifies constraints and standards for AI Agents when working on dotsem/actions: a monorepo of opinionated composite/JS actions and reusable workflows consumed by other repositories. Every change here ships to every consumer, so correctness and pinning discipline outrank convenience.
+A JavaScript action, listed on the GitHub Marketplace, that turns any SARIF file into a job summary with a badge and a sticky PR comment, and opens or closes a tracking issue for scheduled scans. Strangers depend on it, so correctness and API stability outrank convenience.
 
 ## CRITICAL INSTRUCTIONS
 
@@ -24,52 +24,50 @@ This file specifies constraints and standards for AI Agents when working on dots
 
 ## Repository Layout
 
-| Path                               | Purpose                                                                                                                            |
-| :--------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------- |
-| `<action>/action.yml`              | Public composite or JS actions (`setup-node`, `build-node`, `setup-flutter`, `build-flutter`, `flutter-matrix`, `security-report`) |
-| `<action>/scripts/`                | Shell / PowerShell called from composite steps via `${{ github.action_path }}`                                                     |
-| `security-report/src/` → `dist/`   | TypeScript source, bundled by `tsup` into committed `dist/index.js`                                                                |
-| `build-flutter/targets.json`       | Single source of truth for valid Flutter targets and their runner OS                                                               |
-| `.github/workflows/<name>.yml`     | Public reusable workflows (`workflow_call`): `flutter-ci`, `flutter-cd`, `trivy-audit`                                             |
-| `.github/workflows/internal-*.yml` | This repo's own CI, tests and release. Never consumed externally                                                                   |
-| `tests/fixtures/`                  | Minimal Node / Flutter projects and SARIF files used by `internal-test-*` workflows                                                |
+| Path | Purpose |
+| :--- | :--- |
+| `action.yml` | The action. Must stay at the repo root (Marketplace requirement) |
+| `src/` → `dist/index.js` | TypeScript source, bundled by `tsup` into committed `dist/` |
+| `README.md` | Also the Marketplace listing page |
+| `.github/workflows/internal-test.yml` | Tests the action via `uses: ./` against `tests/fixtures/*.sarif` |
+| `.github/workflows/internal-check-dist.yml` | Fails when `dist/` drifts from `src/` |
+| `.github/workflows/internal-security-audit.yml` | Trivy scan of this repo, reported with `uses: ./` |
+| `.github/workflows/internal-*.yml` | Other thin callers of `dotactions/tooling` |
 
-## Project Rules
-
-### Pinning & Self-References
+## Pinning & References
 
 - Every third-party `uses:` is pinned to a full commit SHA with a version comment: `uses: owner/repo@<40-char-sha> # vX.Y.Z`. Resolve SHAs with `git ls-remote --tags`; never guess or invent one. If you cannot resolve it, stop and ask.
-- References to this repo's own actions **must** be `dotsem/actions/<path>@main` with the comment `# @main is rewritten to the exact release tag by internal-release.yml`. Never write `@v0`, `@vX.Y.Z` or a SHA for a self-reference; `internal-check-refs.yml` fails on it.
-- Composite actions cannot reference sibling actions by relative path. Inside a reusable workflow, `./` points at the **caller's** repo. Never "fix" this with a checkout of `dotsem/actions` at a branch.
+- Another `dotactions` repo is pinned the same way, to the commit of its **release tag** (`git ls-remote https://github.com/dotactions/<repo> 'refs/tags/vX.Y.Z^{}'`), never to a `main` SHA: only release commits have their own `@main` self-references rewritten. `internal-check-refs.yml` fails on anything else.
+- This repo's only action is the root one, tested via `uses: ./`. It has no `@main` self-references.
 
-### Inputs, Scripts & Security
+## Shared CI (`dotactions/tooling`)
+
+- `internal-release.yml`, `internal-check-refs.yml`, `internal-actionlint.yml`, `internal-lint.yml` are thin callers of `dotactions/tooling/.github/workflows/*.yml`. They only hold `on:`/`paths:`, `permissions:` and `with:`. Logic changes go to `tooling`, not here.
+- Callers never declare `concurrency:`; the called workflow does, and an identical group in caller and callee deadlocks.
+
+## Security
 
 - Never interpolate `${{ }}` directly into `run:`. Pass values through `env:` and reference `"$VAR"`.
-- Logic longer than a few lines goes into `<action>/scripts/*.sh` (bash, `set -euo pipefail`) or `*.ps1`, not inline YAML. Scripts must pass ShellCheck / PSScriptAnalyzer.
-- Validate inputs early and fail with `::error::` messages naming the allowed values.
+- Validate inputs early and fail with `core.setFailed` / `::error::` messages naming the allowed values.
 - Workflows declare `permissions: contents: read` at the top level and widen per job only where required.
-- Input defaults must not duplicate data that lives elsewhere (e.g. Flutter version comes from the consumer's `pubspec.yaml`, pnpm from `packageManager`, targets from `targets.json`).
+- The action needs only the permissions it documents (`pull-requests: write` for the comment, `issues: write` for `manage-issue`). Never widen that.
 
-### TypeScript (`security-report`)
+## TypeScript
 
 - After changing anything in `src/`, run `pnpm build` and include the regenerated `dist/`. `internal-check-dist.yml` fails on drift.
 - Run `pnpm check-types` before finishing. No `any` without a `// ponytail:` justification.
 
-### Public API & Versioning
+## Public API & Versioning
 
-- Inputs, outputs, input defaults, artifact names and reusable-workflow `with:`/`secrets:` are public API. Renaming, removing or changing the default of any of them is a **breaking change**: flag it explicitly in your response so the human can bump the minor version (during `0.x`).
-- Every public input/output change must be reflected in `README.md` (tables + usage examples, which pin `@v0.N`).
-- Releases are cut only by the human via the `Release` workflow (`internal-release.yml`). Never create or move tags, and never edit the floating-tag logic without being asked.
+- Inputs, outputs, input defaults, the comment marker (`comment-tag`) format and the issue title/body matching are public API. Changing any of them is a **breaking change**: flag it explicitly so the human can bump the major version.
+- Every public input/output change must be reflected in `README.md` (tables + usage examples).
+- Releases are cut only by the human via the `Release` workflow (`internal-release.yml`), which also publishes to the Marketplace. Never create or move tags.
 
 ## Testing
 
-- Composite actions are tested via `uses: ./<action>` in the matching `internal-test-<area>.yml`, with assertions on outputs and produced files. Add or extend a test for every behavioural change.
-- Script logic is unit-tested in `tests/<name>.test.sh` using the `tests/lib.sh` harness (`new_case`, `run`, `expect*`, `stub`, `only_on`); `internal-test-scripts.yml` runs every one on ubuntu, macOS and Windows. Add cases for every branch you change.
-- Each `internal-*` workflow has a `paths:` filter. When adding files that a workflow should cover, update its filter.
+- Behaviour is tested via `uses: ./` in `internal-test.yml`, with assertions on outputs and the report file. Add a case (and a SARIF fixture if needed) for every behavioural change.
 - Local checks before finishing (run whichever apply):
-    - `shellcheck <changed .sh files>`
-    - `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12` for workflow changes
-    - `pnpm check-types && pnpm build` for `security-report`
+    - `pnpm check-types && pnpm build` (no diff in `dist/`)
     - `pnpm prettier --check .`
-    - Exercise changed scripts directly with sample env vars and a temp `GITHUB_OUTPUT` / `GITHUB_ENV`
-- Report honestly which checks ran and which could not (e.g. multi-OS builds only run in CI).
+    - `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12` for workflow changes
+- Report honestly which checks ran and which could not (PR comment and issue handling only run in CI).
