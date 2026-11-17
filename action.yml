@@ -1,5 +1,5 @@
-name: Security Report
-description: Parses SARIF report, appends summary with badge to job summary, upserts sticky PR comment, and manages automated issue tracking
+name: sarif-reporter
+description: Parses SARIF report, appends summary to job summary, sticky PR comment & manages automated issue tracking
 
 inputs:
   title:
