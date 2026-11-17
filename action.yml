@@ -1,6 +1,9 @@
 name: sarif-reporter
 description: Parses SARIF report, appends summary to job summary, sticky PR comment & manages automated issue tracking
-
+branding:
+  icon: shield
+  color: blue
+  
 inputs:
   title:
     description: Title displayed on top of the security report
